@@ -43,11 +43,15 @@ COLUMN_MAPPING = {
     COL_URGENCY: "urgency",
     COL_SEGMENT: "segment",
 }
+REQUIRED_UPLOAD_COLUMNS_FR = [
+    COL_REF_PIECE,
+    COL_DESC,
+    COL_SCORE,
+    COL_SEGMENT,
+]
 REQUIRED_INTERNAL_COLUMNS = [
-    "pn",
-    "description",
-    "score_criticite",
-    "segment",
+    COLUMN_MAPPING[col_fr]
+    for col_fr in REQUIRED_UPLOAD_COLUMNS_FR
 ]
 
 
@@ -162,26 +166,52 @@ class AppState(rx.State):
     selected_file_name: str = ""
 
     def _parse_and_prepare_df(
-        self, df: pd.DataFrame
+        self,
+        df: pd.DataFrame,
+        is_uploaded_file: bool = False,
     ) -> Tuple[Optional[List[ItemData]], Optional[str]]:
         """
         Parses and prepares a Pandas DataFrame.
         Renames columns, validates required columns, cleans data, and converts to list of dicts.
+        If is_uploaded_file is True, it performs stricter validation for required columns.
         """
         try:
+            if is_uploaded_file:
+                current_columns_stripped = {
+                    str(col).strip() for col in df.columns
+                }
+                missing_upload_cols = [
+                    col_fr
+                    for col_fr in REQUIRED_UPLOAD_COLUMNS_FR
+                    if col_fr
+                    not in current_columns_stripped
+                ]
+                if (
+                    COL_REF_PIECE in missing_upload_cols
+                    and COL_PN_ALT
+                    in current_columns_stripped
+                ):
+                    missing_upload_cols.remove(
+                        COL_REF_PIECE
+                    )
+                if missing_upload_cols:
+                    return (
+                        None,
+                        f"Colonnes requises manquantes dans le fichier téléversé : {', '.join(missing_upload_cols)}.",
+                    )
             df = df.rename(
                 columns=lambda c: COLUMN_MAPPING.get(
-                    c.strip(), c.strip()
+                    str(c).strip(), str(c).strip()
                 )
             )
-            missing_required = [
+            missing_internal = [
                 col
                 for col in REQUIRED_INTERNAL_COLUMNS
                 if col not in df.columns
             ]
-            if missing_required:
+            if missing_internal:
                 original_missing_names = []
-                for internal_col_name in missing_required:
+                for internal_col_name in missing_internal:
                     found_original = False
                     for (
                         original_name,
@@ -199,7 +229,7 @@ class AppState(rx.State):
                         )
                 return (
                     None,
-                    f"Colonnes requises manquantes : {', '.join(original_missing_names)}.",
+                    f"Colonnes requises manquantes après mappage : {', '.join(original_missing_names)}.",
                 )
             numeric_cols_float = [
                 "quantite_moyenne",
@@ -268,7 +298,10 @@ class AppState(rx.State):
                         df[col] = 0.0
                     elif col_type == int:
                         df[col] = 0
-                    elif col_type == Optional[int]:
+                    elif (
+                        str(col_type)
+                        == "typing.Optional[int]"
+                    ):
                         df[col] = None
                     else:
                         df[col] = None
@@ -279,7 +312,7 @@ class AppState(rx.State):
         except Exception as e:
             return (
                 None,
-                f"Erreur de traitement des données du fichier: {str(e)}",
+                f"Erreur de traitement des données: {str(e)}",
             )
 
     @rx.event
@@ -288,6 +321,7 @@ class AppState(rx.State):
         self.is_loading = True
         self.raw_data = []
         self.data_load_error_message = ""
+        self.selected_file_name = ""
         excel_file_path = Path(
             "assets/Tableau_Final_Items_Critiques.xlsx"
         )
@@ -296,7 +330,9 @@ class AppState(rx.State):
             if excel_file_path.exists():
                 df = pd.read_excel(excel_file_path)
                 processed_data, error = (
-                    self._parse_and_prepare_df(df)
+                    self._parse_and_prepare_df(
+                        df, is_uploaded_file=False
+                    )
                 )
                 if error:
                     self.data_load_error_message = f"Erreur fichier par défaut: {error}. Chargement données exemples."
@@ -311,11 +347,14 @@ class AppState(rx.State):
                 self.data_load_error_message = f"Fichier {excel_file_path.name} introuvable. Chargement données exemples."
             if not df_loaded:
                 self.raw_data = create_sample_data()
+                if not self.data_load_error_message:
+                    self.data_load_error_message += (
+                        " Chargement des données exemples."
+                    )
         except Exception as e:
             self.data_load_error_message = f"Erreur chargement initial: {str(e)}. Chargement données exemples."
             self.raw_data = create_sample_data()
         self.is_loading = False
-        self.selected_file_name = ""
 
     @rx.event
     async def handle_file_upload(
@@ -326,15 +365,16 @@ class AppState(rx.State):
             yield rx.toast.error(
                 "Aucun fichier sélectionné.", duration=3000
             )
+            self.selected_file_name = ""
             return
         uploaded_file = files[0]
         self.selected_file_name = uploaded_file.name
-        if not uploaded_file.name.endswith(".xlsx"):
+        if not uploaded_file.name.lower().endswith(".xlsx"):
             self.raw_data = create_sample_data()
             self.is_loading = False
             self.selected_file_name = ""
             yield rx.toast.error(
-                "Type de fichier invalide. Veuillez téléverser un fichier .xlsx.",
+                "Type de fichier invalide. Veuillez téléverser un fichier .xlsx. Données exemples chargées.",
                 duration=5000,
             )
             return
@@ -342,17 +382,19 @@ class AppState(rx.State):
         yield
         try:
             file_content = await uploaded_file.read()
-            df = pd.read_excel(io.BytesIO(file_content))
+            excel_buffer = io.BytesIO(file_content)
+            df = pd.read_excel(excel_buffer)
             processed_data, error_message = (
-                self._parse_and_prepare_df(df)
+                self._parse_and_prepare_df(
+                    df, is_uploaded_file=True
+                )
             )
             if error_message:
                 self.raw_data = create_sample_data()
                 self.is_loading = False
-                self.selected_file_name = ""
                 yield rx.toast.error(
                     f"Erreur: {error_message} Données exemples chargées.",
-                    duration=5000,
+                    duration=6000,
                 )
                 return
             if processed_data is not None:
@@ -364,21 +406,24 @@ class AppState(rx.State):
                 )
             else:
                 self.raw_data = create_sample_data()
-                self.selected_file_name = ""
                 yield rx.toast.error(
                     "Erreur inconnue lors du traitement du fichier. Données exemples chargées.",
                     duration=5000,
                 )
+        except pd.errors.ParserError as pe:
+            self.raw_data = create_sample_data()
+            yield rx.toast.error(
+                f"Fichier Excel corrompu ou format invalide: {str(pe)}. Données exemples chargées.",
+                duration=6000,
+            )
         except ValueError as ve:
             self.raw_data = create_sample_data()
-            self.selected_file_name = ""
             yield rx.toast.error(
-                f"Fichier Excel corrompu ou malformé: {str(ve)}. Données exemples chargées.",
-                duration=5000,
+                f"Erreur de lecture du fichier Excel (possiblement corrompu): {str(ve)}. Données exemples chargées.",
+                duration=6000,
             )
         except Exception as e:
             self.raw_data = create_sample_data()
-            self.selected_file_name = ""
             yield rx.toast.error(
                 f"Échec du téléversement: {str(e)}. Données exemples chargées.",
                 duration=5000,
@@ -766,7 +811,7 @@ class AppState(rx.State):
     @rx.event
     def download_filtered_data(self):
         if not self.filtered_data:
-            return rx.toast(
+            return rx.toast.info(
                 "Aucune donnée filtrée à télécharger.",
                 duration=3000,
             )
@@ -776,7 +821,7 @@ class AppState(rx.State):
             if isinstance(item, dict)
         ]
         if not valid_data_for_df:
-            return rx.toast(
+            return rx.toast.error(
                 "Erreur: Données filtrées non valides pour le téléchargement.",
                 duration=3000,
             )
@@ -790,6 +835,7 @@ class AppState(rx.State):
             "quantite_moyenne": "Quantité Moyenne",
             "urgency": "URGENCY",
             "segment": "Segment",
+            "annee": "Année",
         }
         download_cols_internal = [
             col_internal
@@ -797,7 +843,7 @@ class AppState(rx.State):
             if col_internal in df_to_download.columns
         ]
         if not download_cols_internal:
-            return rx.toast(
+            return rx.toast.info(
                 "Aucune colonne pertinente à télécharger.",
                 duration=3000,
             )
