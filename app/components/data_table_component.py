@@ -36,19 +36,19 @@ def table_row(item: ItemData) -> rx.Component:
             class_name="px-4 py-2 whitespace-nowrap text-sm text-gray-700",
         ),
         rx.el.td(
-            item["score_criticite"].to_string(),
+            item["score_criticite"],
             class_name="px-4 py-2 whitespace-nowrap text-sm text-gray-700",
         ),
         rx.el.td(
-            f"{(item['percent_aog'] * 100).to_string()}%",
+            f"{item['percent_aog'] * 100:.2f}%",
             class_name="px-4 py-2 whitespace-nowrap text-sm text-gray-700",
         ),
         rx.el.td(
-            f"{(item['percent_nrc'] * 100).to_string()}%",
+            f"{item['percent_nrc'] * 100:.2f}%",
             class_name="px-4 py-2 whitespace-nowrap text-sm text-gray-700",
         ),
         rx.el.td(
-            item["quantite_moyenne"].to_string(),
+            item["quantite_moyenne"],
             class_name="px-4 py-2 whitespace-nowrap text-sm text-gray-700",
         ),
         rx.el.td(
