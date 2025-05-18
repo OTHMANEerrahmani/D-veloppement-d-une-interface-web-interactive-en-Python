@@ -22,9 +22,9 @@ def urgency_pie_chart() -> rx.Component:
                 rx.foreach(
                     AppState.urgency_distribution_data,
                     lambda item, index: rx.recharts.cell(
-                        fill=rx.Var.create(PIE_COLORS)[
+                        fill=rx.Var.create(PIE_COLORS).at(
                             index % len(PIE_COLORS)
-                        ]
+                        )
                     ),
                 ),
                 data_key="value",
