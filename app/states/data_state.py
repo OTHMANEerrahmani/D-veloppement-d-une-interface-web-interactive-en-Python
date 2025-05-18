@@ -11,7 +11,8 @@ from typing import (
 )
 import io
 
-COL_PN = "PN"
+COL_REF_PIECE = "Réfèrence pièce"
+COL_PN_ALT = "PN"
 COL_DESC = "Description"
 COL_QTY_AVG = "Quantité Moyenne"
 COL_VISITS = "Nombre de visites"
@@ -20,12 +21,14 @@ COL_FREQ_NRC = "Fréquence NRC"
 COL_FREQ_AOG = "Fréquence AOG"
 COL_PERCENT_NRC = "% NRC"
 COL_PERCENT_AOG = "% AOG"
-COL_SCORE = "Score criticité"
+COL_SCORE = "Score de criticité"
 COL_AC_REG = "A/C REG"
 COL_ANNEE = "Année"
 COL_URGENCY = "URGENCY"
+COL_SEGMENT = "Segment"
 COLUMN_MAPPING = {
-    COL_PN: "pn",
+    COL_REF_PIECE: "pn",
+    COL_PN_ALT: "pn",
     COL_DESC: "description",
     COL_QTY_AVG: "quantite_moyenne",
     COL_VISITS: "nombre_visites",
@@ -38,7 +41,14 @@ COLUMN_MAPPING = {
     COL_AC_REG: "ac_reg",
     COL_ANNEE: "annee",
     COL_URGENCY: "urgency",
+    COL_SEGMENT: "segment",
 }
+REQUIRED_INTERNAL_COLUMNS = [
+    "pn",
+    "description",
+    "score_criticite",
+    "segment",
+]
 
 
 class ItemData(TypedDict):
@@ -55,6 +65,7 @@ class ItemData(TypedDict):
     ac_reg: str
     annee: Optional[int]
     urgency: str
+    segment: str
 
 
 def create_sample_data() -> list[ItemData]:
@@ -73,6 +84,7 @@ def create_sample_data() -> list[ItemData]:
             "ac_reg": "F-GABC",
             "annee": 2023,
             "urgency": "Critical",
+            "segment": "Engine",
         },
         {
             "pn": "PN002",
@@ -88,12 +100,13 @@ def create_sample_data() -> list[ItemData]:
             "ac_reg": "F-GDEF",
             "annee": 2023,
             "urgency": "AOG",
+            "segment": "Avionics",
         },
     ]
-    for i in range(5, 15):
+    for i in range(3, 15):
         freq_total_val = i * 3
-        freq_nrc_val = i // 3
-        freq_aog_val = i // 5
+        freq_nrc_val = i // 2
+        freq_aog_val = i // 4
         sample_list.append(
             {
                 "pn": f"PN{i:03d}",
@@ -127,6 +140,11 @@ def create_sample_data() -> list[ItemData]:
                 "urgency": ["Routine", "Critical", "AOG"][
                     i % 3
                 ],
+                "segment": [
+                    "Airframe",
+                    "Cabin",
+                    "Landing Gear",
+                ][i % 3],
             }
         )
     return sample_list
@@ -141,36 +159,48 @@ class AppState(rx.State):
     filter_ac_reg: str = ""
     filter_min_score: float = 0.0
     filter_annee: str = ""
+    selected_file_name: str = ""
 
     def _parse_and_prepare_df(
         self, df: pd.DataFrame
     ) -> Tuple[Optional[List[ItemData]], Optional[str]]:
+        """
+        Parses and prepares a Pandas DataFrame.
+        Renames columns, validates required columns, cleans data, and converts to list of dicts.
+        """
         try:
-            actual_columns = df.columns.tolist()
-            renamed_cols = {}
-            missing_excel_cols = []
-            for (
-                excel_col,
-                internal_col,
-            ) in COLUMN_MAPPING.items():
-                if excel_col in actual_columns:
-                    renamed_cols[excel_col] = internal_col
-            df = df.rename(columns=renamed_cols)
-            for (
-                key_info_name,
-                key_info_type,
-            ) in ItemData.__annotations__.items():
-                if key_info_name not in df.columns:
-                    if key_info_type == str:
-                        df[key_info_name] = ""
-                    elif key_info_type == float:
-                        df[key_info_name] = 0.0
-                    elif key_info_type == int:
-                        df[key_info_name] = 0
-                    elif key_info_type == Optional[int]:
-                        df[key_info_name] = None
-                    else:
-                        df[key_info_name] = None
+            df = df.rename(
+                columns=lambda c: COLUMN_MAPPING.get(
+                    c.strip(), c.strip()
+                )
+            )
+            missing_required = [
+                col
+                for col in REQUIRED_INTERNAL_COLUMNS
+                if col not in df.columns
+            ]
+            if missing_required:
+                original_missing_names = []
+                for internal_col_name in missing_required:
+                    found_original = False
+                    for (
+                        original_name,
+                        mapped_name,
+                    ) in COLUMN_MAPPING.items():
+                        if mapped_name == internal_col_name:
+                            original_missing_names.append(
+                                original_name
+                            )
+                            found_original = True
+                            break
+                    if not found_original:
+                        original_missing_names.append(
+                            internal_col_name
+                        )
+                return (
+                    None,
+                    f"Colonnes requises manquantes : {', '.join(original_missing_names)}.",
+                )
             numeric_cols_float = [
                 "quantite_moyenne",
                 "percent_nrc",
@@ -188,6 +218,8 @@ class AppState(rx.State):
                     df[col] = pd.to_numeric(
                         df[col], errors="coerce"
                     ).fillna(0.0)
+                elif col in ItemData.__annotations__:
+                    df[col] = 0.0
             for col in numeric_cols_int:
                 if col in df.columns:
                     df[col] = (
@@ -197,6 +229,8 @@ class AppState(rx.State):
                         .fillna(0)
                         .astype(int)
                     )
+                elif col in ItemData.__annotations__:
+                    df[col] = 0
             if "annee" in df.columns:
                 df["annee"] = df["annee"].apply(
                     lambda x: (
@@ -208,28 +242,33 @@ class AppState(rx.State):
                         else None
                     )
                 )
+            elif "annee" in ItemData.__annotations__:
+                df["annee"] = None
             string_cols = [
                 "pn",
                 "description",
                 "ac_reg",
                 "urgency",
+                "segment",
             ]
             for col in string_cols:
                 if col in df.columns:
                     df[col] = df[col].astype(str).fillna("")
+                elif col in ItemData.__annotations__:
+                    df[col] = ""
             final_columns = list(
                 ItemData.__annotations__.keys()
             )
             for col in final_columns:
                 if col not in df.columns:
-                    key_type = ItemData.__annotations__[col]
-                    if key_type == str:
+                    col_type = ItemData.__annotations__[col]
+                    if col_type == str:
                         df[col] = ""
-                    elif key_type == float:
+                    elif col_type == float:
                         df[col] = 0.0
-                    elif key_type == int:
+                    elif col_type == int:
                         df[col] = 0
-                    elif key_type == Optional[int]:
+                    elif col_type == Optional[int]:
                         df[col] = None
                     else:
                         df[col] = None
@@ -245,6 +284,7 @@ class AppState(rx.State):
 
     @rx.event
     def load_data(self):
+        """Loads initial data from the default Excel file or sample data if not found/error."""
         self.is_loading = True
         self.raw_data = []
         self.data_load_error_message = ""
@@ -275,19 +315,31 @@ class AppState(rx.State):
             self.data_load_error_message = f"Erreur chargement initial: {str(e)}. Chargement données exemples."
             self.raw_data = create_sample_data()
         self.is_loading = False
+        self.selected_file_name = ""
 
     @rx.event
     async def handle_file_upload(
         self, files: list[rx.UploadFile]
     ):
+        """Handles the uploaded Excel file, processes it, and updates the app state."""
         if not files:
             yield rx.toast.error(
-                "Aucun fichier sélectionné."
+                "Aucun fichier sélectionné.", duration=3000
+            )
+            return
+        uploaded_file = files[0]
+        self.selected_file_name = uploaded_file.name
+        if not uploaded_file.name.endswith(".xlsx"):
+            self.raw_data = create_sample_data()
+            self.is_loading = False
+            self.selected_file_name = ""
+            yield rx.toast.error(
+                "Type de fichier invalide. Veuillez téléverser un fichier .xlsx.",
+                duration=5000,
             )
             return
         self.is_loading = True
         yield
-        uploaded_file = files[0]
         try:
             file_content = await uploaded_file.read()
             df = pd.read_excel(io.BytesIO(file_content))
@@ -297,8 +349,9 @@ class AppState(rx.State):
             if error_message:
                 self.raw_data = create_sample_data()
                 self.is_loading = False
+                self.selected_file_name = ""
                 yield rx.toast.error(
-                    f"Erreur: {error_message}. Données exemples chargées.",
+                    f"Erreur: {error_message} Données exemples chargées.",
                     duration=5000,
                 )
                 return
@@ -311,18 +364,28 @@ class AppState(rx.State):
                 )
             else:
                 self.raw_data = create_sample_data()
+                self.selected_file_name = ""
                 yield rx.toast.error(
                     "Erreur inconnue lors du traitement du fichier. Données exemples chargées.",
                     duration=5000,
                 )
+        except ValueError as ve:
+            self.raw_data = create_sample_data()
+            self.selected_file_name = ""
+            yield rx.toast.error(
+                f"Fichier Excel corrompu ou malformé: {str(ve)}. Données exemples chargées.",
+                duration=5000,
+            )
         except Exception as e:
             self.raw_data = create_sample_data()
+            self.selected_file_name = ""
             yield rx.toast.error(
                 f"Échec du téléversement: {str(e)}. Données exemples chargées.",
                 duration=5000,
             )
-        self.is_loading = False
-        yield
+        finally:
+            self.is_loading = False
+            yield
 
     def set_filter_pn(self, value: str):
         self.filter_pn = value
@@ -396,7 +459,7 @@ class AppState(rx.State):
     def unique_annees(self) -> list[str]:
         if not self.raw_data:
             return []
-        valid_annees = []
+        valid_annees: list[int] = []
         for item in self.raw_data:
             annee = item.get("annee")
             if annee is not None:
@@ -404,7 +467,9 @@ class AppState(rx.State):
                     valid_annees.append(int(annee))
                 except (ValueError, TypeError):
                     pass
-        return sorted(list(set(valid_annees)))
+        return sorted(
+            list(set((str(yr) for yr in valid_annees)))
+        )
 
     @rx.var
     def filtered_data(self) -> list[ItemData]:
@@ -657,7 +722,7 @@ class AppState(rx.State):
                 .dropna()
                 .astype(int)
             )
-        except:
+        except Exception:
             return []
         df["score_criticite"] = pd.to_numeric(
             df["score_criticite"], errors="coerce"
@@ -687,7 +752,7 @@ class AppState(rx.State):
         for _, row in evolution.iterrows():
             result_data.append(
                 {
-                    "name": str(row["annee"]),
+                    "name": str(int(row["annee"])),
                     "Score Moyen": round(
                         row["avg_score_criticite"], 2
                     ),
@@ -724,6 +789,7 @@ class AppState(rx.State):
             "percent_nrc": "% NRC",
             "quantite_moyenne": "Quantité Moyenne",
             "urgency": "URGENCY",
+            "segment": "Segment",
         }
         download_cols_internal = [
             col_internal
