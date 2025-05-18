@@ -31,7 +31,7 @@ def main_content_area() -> rx.Component:
                         != "",
                         rx.el.div(
                             rx.el.p(
-                                "Erreur de chargement:",
+                                "Erreur de chargement initial:",
                                 class_name="font-semibold text-red-600",
                             ),
                             rx.el.p(

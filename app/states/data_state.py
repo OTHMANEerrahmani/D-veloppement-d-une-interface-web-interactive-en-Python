@@ -1,7 +1,15 @@
 import reflex as rx
 import pandas as pd
 from pathlib import Path
-from typing import TypedDict, List, Optional, Dict, Union
+from typing import (
+    TypedDict,
+    List,
+    Optional,
+    Dict,
+    Union,
+    Tuple,
+)
+import io
 
 COL_PN = "PN"
 COL_DESC = "Description"
@@ -16,6 +24,21 @@ COL_SCORE = "Score criticité"
 COL_AC_REG = "A/C REG"
 COL_ANNEE = "Année"
 COL_URGENCY = "URGENCY"
+COLUMN_MAPPING = {
+    COL_PN: "pn",
+    COL_DESC: "description",
+    COL_QTY_AVG: "quantite_moyenne",
+    COL_VISITS: "nombre_visites",
+    COL_FREQ_TOTAL: "frequence_totale",
+    COL_FREQ_NRC: "frequence_nrc",
+    COL_FREQ_AOG: "frequence_aog",
+    COL_PERCENT_NRC: "percent_nrc",
+    COL_PERCENT_AOG: "percent_aog",
+    COL_SCORE: "score_criticite",
+    COL_AC_REG: "ac_reg",
+    COL_ANNEE: "annee",
+    COL_URGENCY: "urgency",
+}
 
 
 class ItemData(TypedDict):
@@ -65,51 +88,6 @@ def create_sample_data() -> list[ItemData]:
             "ac_reg": "F-GDEF",
             "annee": 2023,
             "urgency": "AOG",
-        },
-        {
-            "pn": "PN003",
-            "description": "Part C",
-            "quantite_moyenne": 20.0,
-            "nombre_visites": 2,
-            "frequence_totale": 10,
-            "frequence_nrc": 1,
-            "frequence_aog": 0,
-            "percent_nrc": 0.1,
-            "percent_aog": 0.0,
-            "score_criticite": 70.0,
-            "ac_reg": "F-GABC",
-            "annee": 2024,
-            "urgency": "Routine",
-        },
-        {
-            "pn": "PN004",
-            "description": "Part D",
-            "quantite_moyenne": 8.2,
-            "nombre_visites": 8,
-            "frequence_totale": 15,
-            "frequence_nrc": 3,
-            "frequence_aog": 2,
-            "percent_nrc": 0.2,
-            "percent_aog": 0.13,
-            "score_criticite": 90.0,
-            "ac_reg": "F-GHIJ",
-            "annee": 2024,
-            "urgency": "Critical",
-        },
-        {
-            "pn": "PN001",
-            "description": "Part A",
-            "quantite_moyenne": 12.0,
-            "nombre_visites": 6,
-            "frequence_totale": 22,
-            "frequence_nrc": 3,
-            "frequence_aog": 1,
-            "percent_nrc": 0.13,
-            "percent_aog": 0.04,
-            "score_criticite": 88.0,
-            "ac_reg": "F-GABC",
-            "annee": 2024,
-            "urgency": "Critical",
         },
     ]
     for i in range(5, 15):
@@ -164,53 +142,35 @@ class AppState(rx.State):
     filter_min_score: float = 0.0
     filter_annee: str = ""
 
-    @rx.event
-    def load_data(self):
-        self.is_loading = True
-        self.raw_data = []
-        self.data_load_error_message = ""
-        excel_file_path = Path(
-            "assets/Tableau_Final_Items_Critiques.xlsx"
-        )
+    def _parse_and_prepare_df(
+        self, df: pd.DataFrame
+    ) -> Tuple[Optional[List[ItemData]], Optional[str]]:
         try:
-            if not excel_file_path.exists():
-                self.data_load_error_message = f"Erreur: Le fichier {excel_file_path.name} est introuvable. Chargement des données exemples."
-                self.raw_data = create_sample_data()
-                self.is_loading = False
-                return
-            df = pd.read_excel(excel_file_path)
-            column_mapping = {
-                COL_PN: "pn",
-                COL_DESC: "description",
-                COL_QTY_AVG: "quantite_moyenne",
-                COL_VISITS: "nombre_visites",
-                COL_FREQ_TOTAL: "frequence_totale",
-                COL_FREQ_NRC: "frequence_nrc",
-                COL_FREQ_AOG: "frequence_aog",
-                COL_PERCENT_NRC: "percent_nrc",
-                COL_PERCENT_AOG: "percent_aog",
-                COL_SCORE: "score_criticite",
-                COL_AC_REG: "ac_reg",
-                COL_ANNEE: "annee",
-                COL_URGENCY: "urgency",
-            }
             actual_columns = df.columns.tolist()
             renamed_cols = {}
             missing_excel_cols = []
             for (
                 excel_col,
                 internal_col,
-            ) in column_mapping.items():
+            ) in COLUMN_MAPPING.items():
                 if excel_col in actual_columns:
                     renamed_cols[excel_col] = internal_col
-                else:
-                    missing_excel_cols.append(excel_col)
-            if missing_excel_cols:
-                self.data_load_error_message = f"Colonnes manquantes: {', '.join(missing_excel_cols)}. Chargement données exemples."
-                self.raw_data = create_sample_data()
-                self.is_loading = False
-                return
             df = df.rename(columns=renamed_cols)
+            for (
+                key_info_name,
+                key_info_type,
+            ) in ItemData.__annotations__.items():
+                if key_info_name not in df.columns:
+                    if key_info_type == str:
+                        df[key_info_name] = ""
+                    elif key_info_type == float:
+                        df[key_info_name] = 0.0
+                    elif key_info_type == int:
+                        df[key_info_name] = 0
+                    elif key_info_type == Optional[int]:
+                        df[key_info_name] = None
+                    else:
+                        df[key_info_name] = None
             numeric_cols_float = [
                 "quantite_moyenne",
                 "percent_nrc",
@@ -228,8 +188,6 @@ class AppState(rx.State):
                     df[col] = pd.to_numeric(
                         df[col], errors="coerce"
                     ).fillna(0.0)
-                else:
-                    df[col] = 0.0
             for col in numeric_cols_int:
                 if col in df.columns:
                     df[col] = (
@@ -239,8 +197,6 @@ class AppState(rx.State):
                         .fillna(0)
                         .astype(int)
                     )
-                else:
-                    df[col] = 0
             if "annee" in df.columns:
                 df["annee"] = df["annee"].apply(
                     lambda x: (
@@ -252,8 +208,6 @@ class AppState(rx.State):
                         else None
                     )
                 )
-            else:
-                df["annee"] = None
             string_cols = [
                 "pn",
                 "description",
@@ -263,28 +217,112 @@ class AppState(rx.State):
             for col in string_cols:
                 if col in df.columns:
                     df[col] = df[col].astype(str).fillna("")
-                else:
-                    df[col] = ""
-            for (
-                key_info
-            ) in ItemData.__annotations__.items():
-                key_name = key_info[0]
-                if key_name not in df.columns:
-                    if key_info[1] == str:
-                        df[key_name] = ""
-                    elif key_info[1] == float:
-                        df[key_name] = 0.0
-                    elif key_info[1] == int:
-                        df[key_name] = 0
-                    elif key_info[1] == Optional[int]:
-                        df[key_name] = None
+            final_columns = list(
+                ItemData.__annotations__.keys()
+            )
+            for col in final_columns:
+                if col not in df.columns:
+                    key_type = ItemData.__annotations__[col]
+                    if key_type == str:
+                        df[col] = ""
+                    elif key_type == float:
+                        df[col] = 0.0
+                    elif key_type == int:
+                        df[col] = 0
+                    elif key_type == Optional[int]:
+                        df[col] = None
                     else:
-                        df[key_name] = None
-            self.raw_data = df.to_dict(orient="records")
+                        df[col] = None
+            return (
+                df[final_columns].to_dict(orient="records"),
+                None,
+            )
         except Exception as e:
-            self.data_load_error_message = f"Erreur: {str(e)}. Chargement des données exemples."
+            return (
+                None,
+                f"Erreur de traitement des données du fichier: {str(e)}",
+            )
+
+    @rx.event
+    def load_data(self):
+        self.is_loading = True
+        self.raw_data = []
+        self.data_load_error_message = ""
+        excel_file_path = Path(
+            "assets/Tableau_Final_Items_Critiques.xlsx"
+        )
+        df_loaded = False
+        try:
+            if excel_file_path.exists():
+                df = pd.read_excel(excel_file_path)
+                processed_data, error = (
+                    self._parse_and_prepare_df(df)
+                )
+                if error:
+                    self.data_load_error_message = f"Erreur fichier par défaut: {error}. Chargement données exemples."
+                else:
+                    self.raw_data = (
+                        processed_data
+                        if processed_data is not None
+                        else []
+                    )
+                    df_loaded = True
+            else:
+                self.data_load_error_message = f"Fichier {excel_file_path.name} introuvable. Chargement données exemples."
+            if not df_loaded:
+                self.raw_data = create_sample_data()
+        except Exception as e:
+            self.data_load_error_message = f"Erreur chargement initial: {str(e)}. Chargement données exemples."
             self.raw_data = create_sample_data()
         self.is_loading = False
+
+    @rx.event
+    async def handle_file_upload(
+        self, files: list[rx.UploadFile]
+    ):
+        if not files:
+            yield rx.toast.error(
+                "Aucun fichier sélectionné."
+            )
+            return
+        self.is_loading = True
+        yield
+        uploaded_file = files[0]
+        try:
+            file_content = await uploaded_file.read()
+            df = pd.read_excel(io.BytesIO(file_content))
+            processed_data, error_message = (
+                self._parse_and_prepare_df(df)
+            )
+            if error_message:
+                self.raw_data = create_sample_data()
+                self.is_loading = False
+                yield rx.toast.error(
+                    f"Erreur: {error_message}. Données exemples chargées.",
+                    duration=5000,
+                )
+                return
+            if processed_data is not None:
+                self.raw_data = processed_data
+                self.data_load_error_message = ""
+                yield rx.toast.success(
+                    "Fichier téléversé et traité avec succès!",
+                    duration=3000,
+                )
+            else:
+                self.raw_data = create_sample_data()
+                yield rx.toast.error(
+                    "Erreur inconnue lors du traitement du fichier. Données exemples chargées.",
+                    duration=5000,
+                )
+        except Exception as e:
+            self.raw_data = create_sample_data()
+            yield rx.toast.error(
+                f"Échec du téléversement: {str(e)}. Données exemples chargées.",
+                duration=5000,
+            )
+        self.is_loading = False
+        yield
 
     def set_filter_pn(self, value: str):
         self.filter_pn = value
@@ -316,7 +354,7 @@ class AppState(rx.State):
                     (
                         str(item["pn"])
                         for item in self.raw_data
-                        if item["pn"]
+                        if item.get("pn")
                     )
                 )
             )
@@ -332,7 +370,7 @@ class AppState(rx.State):
                     (
                         str(item["urgency"])
                         for item in self.raw_data
-                        if item["urgency"]
+                        if item.get("urgency")
                     )
                 )
             )
@@ -348,7 +386,7 @@ class AppState(rx.State):
                     (
                         str(item["ac_reg"])
                         for item in self.raw_data
-                        if item["ac_reg"]
+                        if item.get("ac_reg")
                     )
                 )
             )
@@ -358,18 +396,15 @@ class AppState(rx.State):
     def unique_annees(self) -> list[str]:
         if not self.raw_data:
             return []
-        return sorted(
-            list(
-                set(
-                    (
-                        str(int(item["annee"]))
-                        for item in self.raw_data
-                        if item["annee"] is not None
-                        and str(item["annee"]).isdigit()
-                    )
-                )
-            )
-        )
+        valid_annees = []
+        for item in self.raw_data:
+            annee = item.get("annee")
+            if annee is not None:
+                try:
+                    valid_annees.append(int(annee))
+                except (ValueError, TypeError):
+                    pass
+        return sorted(list(set(valid_annees)))
 
     @rx.var
     def filtered_data(self) -> list[ItemData]:
@@ -380,27 +415,32 @@ class AppState(rx.State):
             data = [
                 item
                 for item in data
-                if self.filter_pn.lower()
-                in str(item["pn"]).lower()
+                if isinstance(item, dict)
+                and self.filter_pn.lower()
+                in str(item.get("pn", "")).lower()
             ]
         if self.filter_urgency:
             data = [
                 item
                 for item in data
-                if str(item["urgency"])
+                if isinstance(item, dict)
+                and str(item.get("urgency", ""))
                 == self.filter_urgency
             ]
         if self.filter_ac_reg:
             data = [
                 item
                 for item in data
-                if str(item["ac_reg"]) == self.filter_ac_reg
+                if isinstance(item, dict)
+                and str(item.get("ac_reg", ""))
+                == self.filter_ac_reg
             ]
         if self.filter_min_score > 0:
             data = [
                 item
                 for item in data
-                if item["score_criticite"]
+                if isinstance(item, dict)
+                and item.get("score_criticite", 0.0)
                 >= self.filter_min_score
             ]
         if self.filter_annee:
@@ -409,8 +449,9 @@ class AppState(rx.State):
                 data = [
                     item
                     for item in data
-                    if item["annee"] is not None
-                    and item["annee"] == year_int
+                    if isinstance(item, dict)
+                    and item.get("annee") is not None
+                    and (item.get("annee") == year_int)
                 ]
             except ValueError:
                 pass
@@ -427,7 +468,8 @@ class AppState(rx.State):
         scores = [
             item["score_criticite"]
             for item in self.filtered_data
-            if isinstance(
+            if isinstance(item, dict)
+            and isinstance(
                 item.get("score_criticite"), (int, float)
             )
         ]
@@ -444,7 +486,8 @@ class AppState(rx.State):
         aog_percents = [
             item["percent_aog"]
             for item in self.filtered_data
-            if isinstance(
+            if isinstance(item, dict)
+            and isinstance(
                 item.get("percent_aog"), (int, float)
             )
         ]
@@ -464,7 +507,8 @@ class AppState(rx.State):
         nrc_percents = [
             item["percent_nrc"]
             for item in self.filtered_data
-            if isinstance(
+            if isinstance(item, dict)
+            and isinstance(
                 item.get("percent_nrc"), (int, float)
             )
         ]
@@ -483,15 +527,22 @@ class AppState(rx.State):
     ) -> list[dict[str, Union[str, float]]]:
         if not self.filtered_data:
             return []
+        valid_data = [
+            item
+            for item in self.filtered_data
+            if isinstance(item, dict)
+            and "score_criticite" in item
+            and ("pn" in item)
+        ]
         sorted_data = sorted(
-            self.filtered_data,
+            valid_data,
             key=lambda x: x.get("score_criticite", 0.0),
             reverse=True,
         )
         top_10 = sorted_data[:10]
         return [
             {
-                "name": str(item["pn"]),
+                "name": str(item.get("pn", "N/A")),
                 "Score": item.get("score_criticite", 0.0),
             }
             for item in top_10
@@ -503,9 +554,32 @@ class AppState(rx.State):
     ) -> list[dict[str, Union[str, float]]]:
         if not self.filtered_data:
             return []
-        df = pd.DataFrame(self.filtered_data)
+        valid_data_for_df = [
+            item
+            for item in self.filtered_data
+            if isinstance(item, dict)
+            and all(
+                (
+                    k in item
+                    for k in [
+                        "pn",
+                        "percent_aog",
+                        "percent_nrc",
+                    ]
+                )
+            )
+        ]
+        if not valid_data_for_df:
+            return []
+        df = pd.DataFrame(valid_data_for_df)
         if df.empty:
             return []
+        df["percent_aog"] = pd.to_numeric(
+            df["percent_aog"], errors="coerce"
+        ).fillna(0.0)
+        df["percent_nrc"] = pd.to_numeric(
+            df["percent_nrc"], errors="coerce"
+        ).fillna(0.0)
         grouped = (
             df.groupby("pn")
             .agg(
@@ -538,15 +612,15 @@ class AppState(rx.State):
     ) -> list[dict[str, Union[str, int]]]:
         if not self.filtered_data:
             return []
+        urgencies = [
+            str(item.get("urgency", "Unknown"))
+            for item in self.filtered_data
+            if isinstance(item, dict)
+        ]
+        if not urgencies:
+            return []
         urgency_counts = (
-            pd.Series(
-                (
-                    str(item["urgency"])
-                    for item in self.filtered_data
-                )
-            )
-            .value_counts()
-            .to_dict()
+            pd.Series(urgencies).value_counts().to_dict()
         )
         return [
             {"name": str(urgency), "value": count}
@@ -562,12 +636,38 @@ class AppState(rx.State):
         data_with_year = [
             item
             for item in self.filtered_data
-            if item.get("annee") is not None
+            if isinstance(item, dict)
+            and item.get("annee") is not None
+            and all(
+                (
+                    k in item
+                    for k in [
+                        "score_criticite",
+                        "quantite_moyenne",
+                    ]
+                )
+            )
         ]
         if not data_with_year:
             return []
         df = pd.DataFrame(data_with_year)
-        df["annee"] = df["annee"].astype(int)
+        try:
+            df["annee"] = (
+                pd.to_numeric(df["annee"], errors="coerce")
+                .dropna()
+                .astype(int)
+            )
+        except:
+            return []
+        df["score_criticite"] = pd.to_numeric(
+            df["score_criticite"], errors="coerce"
+        ).fillna(0.0)
+        df["quantite_moyenne"] = pd.to_numeric(
+            df["quantite_moyenne"], errors="coerce"
+        ).fillna(0.0)
+        df = df.dropna(subset=["annee"])
+        if df.empty:
+            return []
         evolution = (
             df.groupby("annee")
             .agg(
@@ -605,7 +705,17 @@ class AppState(rx.State):
                 "Aucune donnée filtrée à télécharger.",
                 duration=3000,
             )
-        df_to_download = pd.DataFrame(self.filtered_data)
+        valid_data_for_df = [
+            item
+            for item in self.filtered_data
+            if isinstance(item, dict)
+        ]
+        if not valid_data_for_df:
+            return rx.toast(
+                "Erreur: Données filtrées non valides pour le téléchargement.",
+                duration=3000,
+            )
+        df_to_download = pd.DataFrame(valid_data_for_df)
         cols_to_download_map = {
             "pn": "PN",
             "description": "Description",
@@ -616,15 +726,25 @@ class AppState(rx.State):
             "urgency": "URGENCY",
         }
         download_cols_internal = [
-            col
-            for col in cols_to_download_map.keys()
-            if col in df_to_download.columns
+            col_internal
+            for col_internal in cols_to_download_map.keys()
+            if col_internal in df_to_download.columns
         ]
+        if not download_cols_internal:
+            return rx.toast(
+                "Aucune colonne pertinente à télécharger.",
+                duration=3000,
+            )
         df_to_download = df_to_download[
             download_cols_internal
         ]
+        current_rename_map = {
+            k: v
+            for k, v in cols_to_download_map.items()
+            if k in download_cols_internal
+        }
         df_to_download = df_to_download.rename(
-            columns=cols_to_download_map
+            columns=current_rename_map
         )
         csv_string = df_to_download.to_csv(
             index=False, encoding="utf-8"

@@ -15,12 +15,55 @@ def filter_input_group(
     )
 
 
+def file_upload_component() -> rx.Component:
+    return rx.el.div(
+        rx.el.h3(
+            "Téléverser un Fichier Excel",
+            class_name="text-md font-semibold text-gray-700 mb-2",
+        ),
+        rx.upload.root(
+            rx.el.div(
+                rx.icon(
+                    tag="cloud_upload",
+                    class_name="w-8 h-8 mx-auto mb-2 text-gray-500 stroke-gray-500",
+                ),
+                rx.el.p(
+                    rx.el.span(
+                        "Cliquez pour téléverser",
+                        class_name="font-semibold text-indigo-600",
+                    ),
+                    " ou glissez-déposez",
+                    class_name="text-xs text-gray-600",
+                ),
+                rx.el.p(
+                    "Fichier .xlsx uniquement",
+                    class_name="text-xs text-gray-500",
+                ),
+                class_name="flex flex-col items-center justify-center py-3",
+            ),
+            id="excel_upload",
+            accept={
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [
+                    ".xlsx"
+                ]
+            },
+            on_drop=AppState.handle_file_upload(
+                rx.upload_files(upload_id="excel_upload")
+            ),
+            multiple=False,
+            class_name="w-full border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 hover:border-indigo-500 transition-colors duration-150 ease-in-out",
+        ),
+        class_name="mb-6 p-4 border-b border-gray-200",
+    )
+
+
 def sidebar() -> rx.Component:
     return rx.el.aside(
         rx.el.div(
+            file_upload_component(),
             rx.el.h2(
                 "Filtres",
-                class_name="text-xl font-semibold text-gray-800 mb-6",
+                class_name="text-xl font-semibold text-gray-800 mb-6 px-4",
             ),
             filter_input_group(
                 "PN:",
@@ -92,7 +135,7 @@ def sidebar() -> rx.Component:
                     class_name="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm",
                 ),
             ),
-            class_name="p-4",
+            class_name="p-4 md:p-0",
         ),
         class_name="w-full md:w-72 bg-white shadow-lg h-screen overflow-y-auto border-r border-gray-200",
     )
