@@ -142,8 +142,8 @@ def file_upload_component() -> rx.Component:
         rx.cond(
             AppState.is_loading,
             rx.el.div(
-                rx.spinner(
-                    class_name="w-4 h-4 text-indigo-600 mr-2"
+                rx.el.div(
+                    class_name="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-indigo-600 mr-2"
                 ),
                 rx.el.p(
                     "Traitement du fichier...",

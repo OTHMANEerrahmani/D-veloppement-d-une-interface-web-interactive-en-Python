@@ -18,8 +18,8 @@ def main_content_area() -> rx.Component:
             rx.cond(
                 AppState.is_loading,
                 rx.el.div(
-                    rx.spinner(
-                        class_name="w-8 h-8 text-indigo-600"
+                    rx.el.div(
+                        class_name="animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-indigo-600"
                     ),
                     rx.el.p(
                         "Chargement des données...",
